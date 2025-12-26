@@ -7,17 +7,15 @@ import matplotlib.pyplot as plt
 # 1. 設定
 # ==========================================
 stock_symbol = "2330.TW"  # 台積電
-start_date = "2024-01-01" # 建議抓長一點，PIP 效果比較好
-end_date = "2024-12-31"   # 或用 datetime.now()
+start_date = "2018-01-01" 
+end_date = "2025-12-10"   
 
-# PIP 的數量：這決定了您要抓多「大」的波段
-# 數量越少 -> 只抓大波段 (長線)
-# 數量越多 -> 連小波段都抓 (短線)
-# 建議：約總天數的 5% ~ 10%
-PIP_COUNT = 60
+# PIP 的數量：
+# 因為只標記反轉點的前一天，這裡的數量大約就是最後 Label=1 的總數
+PIP_COUNT = 60 
 
 # ==========================================
-# 2. PIP 演算法核心 (數學部分)
+# 2. PIP 演算法核心 (數學部分 - 不變)
 # ==========================================
 def calculate_vertical_distance(p1, p2, p3):
     x1, y1 = p1
@@ -29,7 +27,6 @@ def calculate_vertical_distance(p1, p2, p3):
     return abs(A * x3 + B * y3 + C) / np.sqrt(A**2 + B**2)
 
 def find_pips(data, n_pips):
-    # pips 存放格式: [(index, price), (index, price)...]
     pips = [(0, data[0]), (len(data)-1, data[-1])]
     
     while len(pips) < n_pips:
@@ -39,7 +36,6 @@ def find_pips(data, n_pips):
         
         for i in range(len(pips) - 1):
             p1, p2 = pips[i], pips[i+1]
-            # 搜尋兩點區間內的所有點
             for j in range(p1[0] + 1, p2[0]):
                 p3 = (j, data[j])
                 dist = calculate_vertical_distance(p1, p2, p3)
@@ -53,16 +49,14 @@ def find_pips(data, n_pips):
 # ==========================================
 # 主程式
 # ==========================================
-print(f"--- 步驟 3: 抓取 {stock_symbol} 並標記 PIP 反轉點 ---")
+print(f"--- 步驟 3: 抓取 {stock_symbol} 並標記 PIP 反轉點 (前一天模式) ---")
 
 # 1. 下載股價
 print("正在下載股價資料...")
 df = yf.download(stock_symbol, start=start_date, end=end_date)
-# 清理 MultiIndex (yfinance 新版問題)
 if isinstance(df.columns, pd.MultiIndex):
     df.columns = df.columns.droplevel(1)
 
-# 只要收盤價
 close_prices = df['Close'].values
 dates = df.index
 print(f"下載完成，共 {len(df)} 個交易日。")
@@ -70,66 +64,66 @@ print(f"下載完成，共 {len(df)} 個交易日。")
 # 2. 執行 PIP
 print(f"正在計算 PIP (目標找出 {PIP_COUNT} 個關鍵點)...")
 pip_points = find_pips(close_prices, PIP_COUNT)
-# pip_points 是一個 list: [(0, 450.0), (15, 500.0), ...]
 
-# 3. 轉換為標籤 (Labeling)
-# 0: 無訊號, 1: 買點(Valley), 2: 賣點(Peak)
+# ==========================================
+# 3. [修改重點] 轉換為二元標籤且提前一天
+# ==========================================
+# 0: 盤整/無訊號
+# 1: 反轉預警 (代表明天就是 PIP 頂點或底點)
 labels = np.zeros(len(close_prices), dtype=int)
-pip_indices = [] # 存下來畫圖用
 
-# 我們只看 PIP 列表的中間點 (排除頭尾)
+# 我們只看 PIP 列表的中間點
 for i in range(1, len(pip_points) - 1):
-    prev_p = pip_points[i-1]
     curr_p = pip_points[i]
-    next_p = pip_points[i+1]
+    idx = curr_p[0] # 這是 PIP 發生的當天 (第 t 天)
     
-    idx = curr_p[0]
-    price = curr_p[1]
-    pip_indices.append(idx)
+    # === 關鍵修改：標記在 idx - 1 (第 t-1 天) ===
+    target_idx = idx - 1
     
-    # 判斷波峰還是波谷
-    if price > prev_p[1] and price > next_p[1]:
-        labels[idx] = 2 # 賣點 (高點)
-    elif price < prev_p[1] and price < next_p[1]:
-        labels[idx] = 1 # 買點 (低點)
+    # 確保索引沒有超出範圍 (也就是第一天無法標記前一天，需忽略)
+    if target_idx >= 0:
+        labels[target_idx] = 1 
 
 # 將標籤加回 DataFrame
 df['Label'] = labels
-print(f"標記完成！")
-print(f"買點 (Label 1): {sum(labels==1)} 個")
-print(f"賣點 (Label 2): {sum(labels==2)} 個")
 
-# 4. 存檔 (這是之後要跟新聞合併的檔案)
-output_csv = f"stock_labels_{stock_symbol.split('.')[0]}.csv"
+print(f"標記完成！")
+print(f"總資料筆數: {len(df)}")
+print(f"反轉預警點 (Label 1): {sum(labels==1)} 個")
+print(f"盤整/無訊號 (Label 0): {sum(labels==0)} 個")
+print(f"資料比例 (1 : 0) -> 1 : {sum(labels==0)/sum(labels==1):.2f}")
+
+# 4. 存檔
+output_csv = f"stock_labels_{stock_symbol.split('.')[0]}_binary_lag1.csv"
 df.to_csv(output_csv)
 print(f"已儲存股價與標籤至: {output_csv}")
 
 # ==========================================
-# 5. 視覺化驗證 (非常重要!)
+# 5. [修改重點] 視覺化驗證
 # ==========================================
 plt.figure(figsize=(14, 7))
+
+# 畫股價
 plt.plot(dates, close_prices, label='Stock Price', color='gray', alpha=0.5)
 
-# 畫出 PIP 連線 (紅色趨勢線)
+# 畫 PIP 連線 (雖然標籤提前，但為了方便人類理解，連線還是畫在實際轉折點)
 pip_x = [dates[p[0]] for p in pip_points]
 pip_y = [p[1] for p in pip_points]
-plt.plot(pip_x, pip_y, color='blue', linestyle='--', linewidth=1, label='PIP Trend', alpha=0.6)
+plt.plot(pip_x, pip_y, color='blue', linestyle='--', linewidth=1, label='Actual Trends', alpha=0.4)
 
-# 畫出買賣點
-buy_indices = df[df['Label'] == 1].index
-buy_prices = df[df['Label'] == 1]['Close']
-plt.scatter(buy_indices, buy_prices, color='red', marker='^', s=100, label='Buy (Valley)', zorder=5)
+# 畫出「標籤點」(這些點會在轉折發生前一天出現)
+signal_indices = df[df['Label'] == 1].index
+signal_prices = df[df['Label'] == 1]['Close']
 
-sell_indices = df[df['Label'] == 2].index
-sell_prices = df[df['Label'] == 2]['Close']
-plt.scatter(sell_indices, sell_prices, color='green', marker='v', s=100, label='Sell (Peak)', zorder=5)
+# 使用醒目的橘色圓點表示「預警訊號」
+plt.scatter(signal_indices, signal_prices, color='orange', marker='o', s=80, label='Reversal Warning (t-1)', zorder=5)
 
-plt.title(f"{stock_symbol} PIP Turning Points (n={PIP_COUNT})")
+plt.title(f"{stock_symbol} Reversal Prediction (Label=1 at Day t-1)")
 plt.legend()
 plt.grid(True, alpha=0.3)
 
 # 存圖片
-img_name = "pip_verification.png"
+img_name = "pip_verification_binary_lag1.png"
 plt.savefig(img_name)
-print(f"驗證圖片已儲存至: {img_name} (請打開檢查)")
+print(f"驗證圖片已儲存至: {img_name}")
 plt.show()
