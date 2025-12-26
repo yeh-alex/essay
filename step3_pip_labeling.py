@@ -9,8 +9,8 @@ import matplotlib.pyplot as plt
 stock_symbol = "2330.TW"  # 台積電
 
 # 設定 8 年區間 (視你的新聞資料而定，這裡設為 2016~2024)
-start_date = "2016-01-01"
-end_date = "2024-12-31"
+start_date = "2018-01-01"
+end_date = "2025-12-10"
 
 # === 關鍵修改：針對 8 年資料調整 PIP 數量 ===
 # 假設一年約有 60 個重要反轉點
